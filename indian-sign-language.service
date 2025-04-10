@@ -1,0 +1,16 @@
+[Unit]
+Description=Indian Sign Language Translator
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/mini_project
+ExecStart=/usr/bin/python3 /path/to/mini_project/run_app.py --host 0.0.0.0 --port 5000
+Restart=always
+RestartSec=5
+StandardOutput=append:/path/to/mini_project/logs/service.log
+StandardError=append:/path/to/mini_project/logs/service.log
+
+[Install]
+WantedBy=multi-user.target 
