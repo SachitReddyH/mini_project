@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 import tensorflow as tf
 from .hand_tracking import HandTracker
+from .hmm_model import SignLanguageHMM, prepare_sequence_data
 
 class SignLanguageRecognizer:
     def __init__(self, model_path=None):
@@ -9,19 +10,93 @@ class SignLanguageRecognizer:
         Initialize the sign language recognizer.
         
         Args:
-            model_path: Path to a pre-trained model (optional)
+            model_path (str, optional): Path to pre-trained HMM model
         """
         self.hand_tracker = HandTracker()
-        self.model = None
-        
-        # Load pre-trained model if provided
+        self.hmm_model = SignLanguageHMM()
         if model_path:
-            try:
-                self.model = tf.keras.models.load_model(model_path)
-                print(f"Loaded model from {model_path}")
-            except Exception as e:
-                print(f"Error loading model: {e}")
-                print("Using rule-based recognition instead")
+            self.hmm_model = SignLanguageHMM.load_model(model_path)
+        
+        # Dictionary mapping sign indices to labels
+        self.sign_labels = {
+            0: "Hello",
+            1: "Thank You",
+            2: "Please",
+            3: "Yes",
+            4: "No",
+            # Add more signs as needed
+        }
+        
+    def preprocess_frame(self, frame):
+        """
+        Preprocess the input frame.
+        
+        Args:
+            frame (np.array): Input frame
+            
+        Returns:
+            np.array: Preprocessed frame
+        """
+        # Convert to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Detect hands
+        frame_rgb = self.hand_tracker.find_hands(frame_rgb)
+        
+        return frame_rgb
+    
+    def recognize_sign(self, frame):
+        """
+        Recognize sign language from a frame.
+        
+        Args:
+            frame (np.array): Input frame
+            
+        Returns:
+            tuple: (predicted_sign, confidence)
+        """
+        # Preprocess frame
+        processed_frame = self.preprocess_frame(frame)
+        
+        # Get hand landmarks
+        hand_landmarks = self.hand_tracker.find_positions(processed_frame)
+        
+        if not hand_landmarks:
+            return "No hand detected", 0.0
+        
+        # Extract features and prepare for HMM
+        features, _ = prepare_sequence_data([hand_landmarks])
+        
+        # Get prediction from HMM
+        predicted_states = self.hmm_model.predict(features)
+        
+        # Get the most common state as the predicted sign
+        predicted_sign_idx = np.bincount(predicted_states).argmax()
+        
+        # Calculate confidence score
+        confidence = self.hmm_model.score(features)
+        confidence = 1 / (1 + np.exp(-confidence))  # Convert to probability
+        
+        return self.sign_labels.get(predicted_sign_idx, "Unknown"), confidence
+    
+    def train(self, training_data):
+        """
+        Train the HMM model on new data.
+        
+        Args:
+            training_data (list): List of hand landmark sequences
+        """
+        features, lengths = prepare_sequence_data(training_data)
+        self.hmm_model.train(features, lengths)
+    
+    def save_model(self, model_path):
+        """
+        Save the trained model.
+        
+        Args:
+            model_path (str): Path to save the model
+        """
+        self.hmm_model.save_model(model_path)
     
     def preprocess_image(self, image):
         """
@@ -76,47 +151,6 @@ class SignLanguageRecognizer:
         ])
         
         return features
-    
-    def recognize_sign(self, image):
-        """
-        Recognize a sign from an image.
-        
-        Args:
-            image: Input image
-            
-        Returns:
-            sign: Recognized sign
-            confidence: Confidence score
-        """
-        # If we have a trained model, use it
-        if self.model is not None:
-            # Preprocess the image
-            processed_image = self.preprocess_image(image)
-            
-            # Make prediction
-            prediction = self.model.predict(np.expand_dims(processed_image, axis=0))
-            
-            # Get the predicted class and confidence
-            predicted_class = np.argmax(prediction[0])
-            confidence = prediction[0][predicted_class]
-            
-            # Map class index to sign (this would be based on your training data)
-            sign_mapping = {
-                0: "A", 1: "B", 2: "C", 3: "D", 4: "E",
-                5: "F", 6: "G", 7: "H", 8: "I", 9: "J",
-                10: "K", 11: "L", 12: "M", 13: "N", 14: "O",
-                15: "P", 16: "Q", 17: "R", 18: "S", 19: "T",
-                20: "U", 21: "V", 22: "W", 23: "X", 24: "Y",
-                25: "Z"
-            }
-            
-            sign = sign_mapping.get(predicted_class, "Unknown")
-            
-            return sign, float(confidence)
-        
-        # Otherwise, use the rule-based recognition from the hand tracker
-        _, hand_landmarks = self.hand_tracker.find_hands(image, draw=False)
-        return self.hand_tracker.recognize_sign(hand_landmarks)
     
     def train_model(self, dataset_path, epochs=10, batch_size=32):
         """
